@@ -1,0 +1,6 @@
+.DS_Store
+__pycache__/
+site/
+writing.txt
+drafts/
+art/

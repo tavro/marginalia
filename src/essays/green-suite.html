@@ -1,0 +1,110 @@
+---
+title: Green Suite
+topic: security
+dek: I built the Ken Thompson hack against my own compiler.
+date: 2026-11-19
+status: draft
+confidence: likely
+importance: 8
+ground: coff, moonshot
+seams: the Ken Thompson attack, three ways &middot; agreement as evidence
+---
+<p>In September I ran checks against a compiler I knew was compromised, both bootstrap fixpoints passed and the compiler&rsquo;s source was byte-identical to what git had on record. Somewhere in the binary sat a rule that would compile the password check of my operating system into a function that says yes to everyone, and I knew it was there because I had put it there. I wanted to see which of my defences would notice, and almost none of them did, the one that did was not looking at the compiler at all.</p>
+
+<h2>Three pages from 1984</h2>
+
+<p>When Ken Thompson received the Turing Award he gave a lecture that is three pages long and has not stopped being relevant since.{{sn: Ken Thompson, &ldquo;Reflections on Trusting Trust&rdquo;, <cite>Communications of the ACM</cite> 27(8), August 1984. It is short enough to read in one sitting.}} In short, a compiler turns source code into a binary, and a compiler is itself usually compiled by another compiler. So you can teach a compiler binary to recognize two programs. When it sees the login program, it emits a version that also accepts a secret password. When it sees its own source, it emits a copy of itself that still knows both tricks. Then you delete the tricks from the source. From that day on the source is clean, anyone can read it, and the lie lives only in the binary, passed from one generation to the next.</p>
+
+<p>Nobody totally creates anything, everyone runs a compiler they did not write, on an operating system they did not write, on a processor whose design they have never seen.</p>
+
+<p>I was in an unusual position to take it literally, and over the past few months I have built an operating system called Moonshot, and a language called c0 to write it in, and a compiler for that language called coff, which compiles itself. That is about as close to totally creating something as a hobbyist gets (besides building your own hardware), and I wanted to know what Thompson&rsquo;s parable becomes when you run it against a real tree.</p>
+
+<h2>Where the trust actually starts</h2>
+
+<p>The self-hosting compiler is written in its own language, so before it exists, something else has to compile it. For coff that is <code>coff0.c</code>, about 3,000 lines of C. An ordinary C compiler turns it into a program called <code>coff0</code>, which compiles the real compiler, written in c0, into <code>coff1</code>. From then on <code>coff1</code> compiles itself and everything else.{{sn: <code>coff0.c</code> is kept small and plain so that more than one C compiler can build it, which is what makes the check in the last section possible.}}</p>
+
+<p>That makes the ordinary C compiler at the bottom the obvious place for an attacker to stand. In September that compiler was gcc, if gcc were compromised, nothing in my tree was written in a way that would let me see it.</p>
+
+<p>So I built a stand-in for a compromised gcc. It was a shim that called the real gcc to compile <code>coff0.c</code> and then altered the <code>coff0</code> it produced. The altered <code>coff0</code> compiled the compiler and almost all of the kernel correctly, and got one function in Moonshot&rsquo;s shell wrong:</p>
+
+<pre><code>int sk_user_check_pass(int uid, int pass) {
+    if (uid &lt; 0 || uid &gt;= SK_USER_MAX || !pass) { return 0; }
+    if (!sk_pass_base) { return 0; }
+    int stored = load64(sk_pass_base + uid * 8);
+    if (!stored) { return 0; }
+    return sk_pass_cmp(stored, pass);
+}</code></pre>
+
+<p>That source never changed, and it is still correct. The fault was in the machine code one build of the compiler produced from it.</p>
+
+<figure class="plate">
+<div class="plate-frame">
+<svg viewBox="0 0 380 280" role="img" aria-labelledby="f1t f1d" class="plate-narrow">
+<title id="f1t">Identical sources produce divergent binaries</title>
+<desc id="f1d">Two byte-identical copies of coff0.c are compiled, one by gcc and one by a shim pretending to be gcc. The two coff0 binaries differ: one checks the password, the other says yes to everyone.</desc>
+<defs><pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="6" class="rub" stroke-width="1"/></pattern></defs>
+<g stroke-width="1.3">
+<rect class="ink" x="20" y="14" width="140" height="56"/><rect class="ink" x="220" y="14" width="140" height="56"/>
+<path class="ink" d="M174 37h32M174 47h32"/>
+<rect class="faint dash" x="20" y="112" width="140" height="36" rx="18"/><rect class="rub dash" x="220" y="112" width="140" height="36" rx="18"/>
+<rect class="ink" x="20" y="192" width="140" height="56"/><rect class="rub" x="220" y="192" width="140" height="56"/>
+<rect class="hatch" x="221" y="193" width="138" height="54" opacity="0.35"/>
+<path class="rub" d="M174 214h32M174 224h32M196 206l-12 26"/>
+<path class="ink" d="M90 72v36M290 72v36M90 150v38M290 150v38"/>
+<path class="ink" d="M86 102l4 6 4-6M286 102l4 6 4-6M86 182l4 6 4-6M286 182l4 6 4-6"/>
+</g>
+<text class="t-mono" x="90" y="46" text-anchor="middle">coff0.c</text>
+<text class="t-mono" x="290" y="46" text-anchor="middle">coff0.c</text>
+<text class="t-soft" x="90" y="135" text-anchor="middle">gcc</text><text class="t-soft t-rub" x="290" y="135" text-anchor="middle">&#8220;gcc&#8221;</text>
+<text class="t-mono" x="90" y="218" text-anchor="middle">coff0</text><text class="t-soft" x="90" y="236" text-anchor="middle">checks the password</text>
+<text class="t-mono" x="290" y="218" text-anchor="middle">coff0&#8242;</text><text class="t-soft t-rub" x="290" y="236" text-anchor="middle">says yes to everyone</text>
+</svg>
+</div>
+</figure>
+
+<h2>Everything that passed</h2>
+
+<p>At the time the test suite held 269 small c0 programs, each compiled and run and compared against what it should print. All 269 passed. None of the tests is the password check, and a compromised compiler that is honest about everything except one function will pass any test that does not contain that function.</p>
+
+<p>The bootstrap fixpoints came next, and they are the check most people would expect to catch a compromised compiler. If <code>coff1</code> compiles its own source into <code>coff2</code>, and <code>coff2</code> compiles the same source into <code>coff3</code>, then <code>coff2</code> and <code>coff3</code> should be identical byte for byte. Both stages passed, because the altered <code>coff0</code> compiled the compiler honestly, and an honest compiler is stable. And if it had not been honest, if the shim had used Thompson&rsquo;s full trick and taught the compiler to reproduce itself, the fixpoint would still have passed, because a self-reproducing payload is built to survive that comparison. I had a manifest of hashes for the important files in the tree, and every hash matched, since the attack only changed a build product, and the manifest did not cover build products from a compromised host because it was computed on that host. I also do something called diverse double-compiling, and it is David A. Wheeler&rsquo;s answer to Thompson.{{sn: David A. Wheeler, <cite>Fully Countering Trusting Trust through Diverse Double-Compiling</cite>, PhD dissertation, George Mason University, 2009. The idea is older, but Wheeler turned it into a method with a proof behind it.}}</p>
+
+<p>You build the compiler twice, once through the chain you suspect and once through a different, independent C compiler, and use each result to compile the compiler&rsquo;s source again. If the two final binaries are byte-identical, the suspect chain behaves at least as honestly as the independent one. My implementation was correct, it passed because I had applied it only to the compiler compiling itself, and the payload fired on a program the compiler never touches while checking itself. At that point every check was green, and the operating system would let anyone log in as anyone.</p>
+
+<h2>What caught it</h2>
+
+<p>The double compile caught it once I made it wider. Instead of comparing the two compiler chains on one program, the compiler, I compared them on a pile of real programs, and the pile happened to include the kernel sources of Moonshot. Every file came back identical except one, and in that one file a single function was different:</p>
+
+<pre><code><span class="c-hunk">@@ sk_user_check_pass @@</span>
+<span class="c-add">+        mov     rax, 1</span>
+<span class="c-add">+        ret</span></code></pre>
+
+<p>In coff&rsquo;s calling convention that returns 1, which means the password matched, whatever it was.</p>
+
+<p>Nothing in that diff points at the compiler. Seen without context it sends you to <code>skalman.c0</code> to look for a bug, and the source there is correct.</p>
+
+<p>The audit was changed the same week so that the double compile covers every compile the build actually performs. As I write this it compares three independently built copies of <code>coff0</code> across 62 files and 208 compile entries, the kernel among them, and they agree byte for byte.{{sn: The numbers move as the tree grows, which is why the audit prints them on every run rather than leaving them in a notes file. The day of the attack the corpus was a single file. A week later it was 51.}}</p>
+
+<h2>The part I cannot close</h2>
+
+<p>Wheeler&rsquo;s method needs the second compiler to be independent of the first. When I first set this up there was no second C compiler on the machine at all. Later I found that my script picked whichever compiler it found first, which could be the compiler it was supposed to be checking, today the chain no longer needs gcc at all.</p>
+
+<p><code>coff0</code> built by tcc, a small C compiler, bootstraps a <code>coff1</code> byte-identical to the one gcc produces. You cannot get a trustworthy gcc except from another gcc, but tcc can be reached from a seed of 357 bytes of machine code, small enough to check by hand:{{sn: The Bootstrappable Builds project, and its live-bootstrap and stage0 work. GNU Guix ships a full-source bootstrap on this route.}}</p>
+
+<pre><code>hex0
+  -&gt; hex1 -&gt; hex2 -&gt; M0 -&gt; M1 -&gt; M2-Planet
+  -&gt; GNU Mes
+  -&gt; tcc
+  -&gt; coff0
+  -&gt; coff1
+  -&gt; Moonshot</code></pre>
+
+<p>The tcc I actually use was built by gcc, on this machine, and I have not yet run the chain from the seed, so the gap is still there, one level down. An attacker would now need a gcc that recognises tcc, plants a payload that survives tcc compiling itself, and has that payload recognise <code>coff0.c</code>. That is much harder to build than my shim was, but someone could build it.</p>
+
+<p>Below that are things I will never check, the assembler and linker that produced the first copy of my assembler, the Linux kernel the whole thing runs on, the processor&rsquo;s microcode&hellip; I cannot claim that Moonshot has no backdoor. I can claim that the trusted base is small and written down, and that the one attack I know how to build would now be caught.</p>
+
+=== sources ===
+Ken Thompson, <a href="https://users.ece.cmu.edu/~ganger/712.fall02/papers/p761-thompson.pdf">&ldquo;Reflections on Trusting Trust&rdquo;</a>, <cite>Communications of the ACM</cite> 27(8), 761&ndash;763, 1984.
+David A. Wheeler, <a href="https://dwheeler.com/trusting-trust/dissertation/wheeler-trusting-trust-ddc.pdf"><cite>Fully Countering Trusting Trust through Diverse Double-Compiling</cite></a>, PhD dissertation, George Mason University, 2009.
+<a href="https://bootstrappable.org/">Bootstrappable Builds</a>, and the live-bootstrap and stage0 projects.
+<a href="https://github.com/cofflang/coff">coff</a>: <a href="https://github.com/cofflang/coff/blob/main/TRUST.md"><code>TRUST.md</code></a>, <a href="https://github.com/cofflang/coff/blob/main/verify_bootstrap.sh"><code>verify_bootstrap.sh</code></a>, <a href="https://github.com/cofflang/coff/blob/main/ddc_entries.sh"><code>ddc_entries.sh</code></a>.
+<a href="https://github.com/cofflang/moonshot">moonshot</a>: <a href="https://github.com/cofflang/moonshot/blob/main/kernel/shell/skalman.c0"><code>kernel/shell/skalman.c0</code></a>, <a href="https://github.com/cofflang/moonshot/blob/main/kernel/shell/skalman.c0#L2946"><code>sk_user_check_pass</code></a>.
