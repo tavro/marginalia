@@ -300,6 +300,7 @@ details.collapse p { text-indent: 0 !important; margin-bottom: 0.6em; }
   }
   .sn-ref { padding: 0 0.3em; }
   .body { overflow-wrap: break-word; }
+  .body p, .body li, .sidenote, blockquote.quote { text-align: left; }
   pre { white-space: pre-wrap; overflow-wrap: anywhere; padding: 0.8rem 0.9rem; }
 }
 
